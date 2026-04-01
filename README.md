@@ -7,6 +7,23 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-brightgreen)](Dockerfile)
 
 ---
+---
+
+title: CustomerSupportEnv
+emoji: 🎧
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_file: server.py
+pinned: false
+tags:
+
+* openenv
+* reinforcement-learning
+* customer-support
+* nlp
+
+---
 
 ## Overview
 
