@@ -1,0 +1,132 @@
+name: CustomerSupportEnv
+version: "1.0.0"
+description: >
+  A real-world customer support reinforcement learning environment where an AI agent
+  handles inbound support tickets. The agent must search a knowledge base, empathise
+  with customers, offer concrete solutions, and resolve tickets efficiently.
+  Models the genuine complexity of Tier-1 customer support: multi-turn conversation,
+  retrieval-augmented reasoning, and satisfaction optimisation.
+
+author: OpenEnv Submission
+domain: customer-support
+tags: [openenv, customer-support, nlp, retrieval, multi-turn, real-world]
+
+tasks:
+  - id: task_1
+    name: "Resolve a Standard Auth Ticket"
+    difficulty: easy
+    ticket: TKT-001
+    max_turns: 8
+    description: >
+      Handle a frustrated customer locked out of their account.
+      Optimal policy: search_kb → empathize → offer_solution → resolve.
+
+  - id: task_2
+    name: "Handle a Multi-Step Billing Dispute"
+    difficulty: medium
+    ticket: TKT-003
+    max_turns: 10
+    description: >
+      Resolve a billing discrepancy. Requires clarification before diagnosis.
+      Generic solutions are penalised; agent must cite a specific credit amount.
+
+  - id: task_3
+    name: "Triage a Critical Time-Sensitive Bug"
+    difficulty: hard
+    ticket: TKT-006
+    max_turns: 8
+    description: >
+      Enterprise customer with a compliance deadline. Data export stuck for 6 hours.
+      Two-part solution required (priority queue + partial export).
+      Escalation is penalised. Tests urgency awareness and multi-step planning.
+
+observation_space:
+  type: object
+  fields:
+    ticket_id: {type: string, nullable: true}
+    task_id: {type: string}
+    status: {type: string, enum: [idle, open, resolved, escalated, timeout]}
+    sentiment: {type: string, enum: [positive, neutral, frustrated, angry], nullable: true}
+    priority: {type: string, enum: [low, medium, high, urgent], nullable: true}
+    category: {type: string, enum: [auth, billing, fulfillment, bug, sales, general], nullable: true}
+    turn: {type: integer, minimum: 0}
+    max_turns: {type: integer}
+    history: {type: array, items: {role: string, text: string, turn: integer}}
+    kb_results: {type: array, items: {type: string}}
+    kb_searched: {type: boolean}
+    empathized: {type: boolean}
+    clarified: {type: boolean}
+    solution_offered: {type: boolean}
+    escalated: {type: boolean}
+    cumulative_reward: {type: number}
+    done: {type: boolean}
+
+action_space:
+  type: object
+  fields:
+    action_type:
+      type: string
+      enum: [search_kb, empathize, ask_clarify, offer_solution, escalate, resolve, send_message]
+    payload:
+      type: string
+      nullable: true
+      description: >
+        Required for offer_solution (solution text), ask_clarify (question),
+        and send_message (message body). Optional for others.
+
+reward_function:
+  type: shaped
+  components:
+    search_kb: "+2.0 (first call only; -1.0 duplicate)"
+    empathize: "+1.0 (first call only)"
+    ask_clarify: "+1.0 (first call only)"
+    offer_solution: "+3.0 × quality_score (0–1); -1.0 if KB not searched first"
+    escalate: "-1.0"
+    resolve_good: "+5.0 + csat × 2.0 (when solution offered)"
+    resolve_bad: "-3.0 (when no solution offered)"
+    timeout: "-2.0"
+  csat_components:
+    empathized: 0.30
+    kb_searched: 0.30
+    solution_offered: 0.40
+
+graders:
+  scoring: 0.0_to_1.0
+  deterministic: true
+  task_1_weights:
+    kb_searched: 0.30
+    empathized: 0.25
+    solution_quality: 0.25
+    resolved: 0.20
+  task_2_weights:
+    ask_clarify: 0.20
+    kb_searched: 0.20
+    solution_quality: 0.30
+    empathized: 0.15
+    resolved: 0.15
+  task_3_weights:
+    kb_searched: 0.20
+    empathized: 0.15
+    solution_quality: 0.35
+    no_escalation: 0.15
+    resolved: 0.15
+
+endpoints:
+  reset: "POST /reset"
+  step: "POST /step"
+  state: "GET /state"
+  tasks: "GET /tasks"
+  grade: "POST /grade"
+  health: "GET /health"
+  spec: "GET /openenv.yaml"
+
+baseline_scores:
+  task_1: 0.85
+  task_2: 0.78
+  task_3: 0.65
+  average: 0.76
+  model: gpt-4o-mini
+
+huggingface:
+  space_sdk: docker
+  port: 7860
