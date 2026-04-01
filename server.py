@@ -112,3 +112,18 @@ def get_yaml():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=7860, reload=False)
+
+from fastapi.responses import HTMLResponse
+
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return """
+    <h1>Customer Support Env 🚀</h1>
+    <p>API is running successfully.</p>
+    <ul>
+        <li>/reset</li>
+        <li>/step</li>
+        <li>/state</li>
+        <li>/grade</li>
+    </ul>
+    """
