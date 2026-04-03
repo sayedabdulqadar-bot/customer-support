@@ -65,7 +65,7 @@ def new_session_id() -> str:
 
 # ── Pydantic Models ──────────────────────────────────────────────────────────
 class ResetRequest(BaseModel):
-    task_id: str = "task_1"
+    task_id: Optional[str] = "task_1"
     seed: Optional[int] = None
 
 
@@ -115,12 +115,12 @@ def serialize_reward(reward: Reward) -> Dict[str, Any]:
 # ── OpenEnv Endpoints ────────────────────────────────────────────────────────
 
 @app.post("/reset")
-async def reset(request: ResetRequest) -> JSONResponse:
+async def reset(request: ResetRequest = None) -> JSONResponse:
     """
     Reset environment and start a new episode.
     
     Args:
-        task_id: One of task_1, task_2, task_3
+        task_id: One of task_1, task_2, task_3 (optional, defaults to task_1)
         seed: Optional random seed
     
     Returns:
@@ -131,7 +131,11 @@ async def reset(request: ResetRequest) -> JSONResponse:
         }
     """
     try:
-        task_id = request.task_id
+        # Handle case where request body is empty or None
+        if request is None:
+            request = ResetRequest()
+        
+        task_id = request.task_id or "task_1"
         seed = request.seed or 42
         
         if task_id not in TASKS:
