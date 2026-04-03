@@ -24,9 +24,9 @@ from pathlib import Path
 
 # FastAPI imports
 try:
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import FastAPI, HTTPException, Request, Body
     from fastapi.responses import FileResponse, JSONResponse
-    from pydantic import BaseModel
+    from pydantic import BaseModel, ConfigDict
     import uvicorn
 except ImportError as e:
     print(f"[ERROR] Missing FastAPI dependency: {e}", flush=True)
@@ -65,7 +65,8 @@ def new_session_id() -> str:
 
 # ── Pydantic Models ──────────────────────────────────────────────────────────
 class ResetRequest(BaseModel):
-    task_id: Optional[str] = "task_1"
+    model_config = ConfigDict(extra="allow")
+    task_id: Optional[str] = None
     seed: Optional[int] = None
 
 
@@ -115,13 +116,15 @@ def serialize_reward(reward: Reward) -> Dict[str, Any]:
 # ── OpenEnv Endpoints ────────────────────────────────────────────────────────
 
 @app.post("/reset")
-async def reset(request: ResetRequest = None) -> JSONResponse:
+async def reset(request: Optional[Dict[str, Any]] = Body(default=None)) -> JSONResponse:
     """
     Reset environment and start a new episode.
     
+    Accepts both empty POST and JSON body with optional parameters.
+    
     Args:
         task_id: One of task_1, task_2, task_3 (optional, defaults to task_1)
-        seed: Optional random seed
+        seed: Optional random seed (defaults to 42)
     
     Returns:
         {
@@ -131,20 +134,24 @@ async def reset(request: ResetRequest = None) -> JSONResponse:
         }
     """
     try:
-        # Handle case where request body is empty or None
-        if request is None:
-            request = ResetRequest()
+        # Default values
+        task_id = "task_1"
+        seed = 42
         
-        task_id = request.task_id or "task_1"
-        seed = request.seed or 42
+        # Override with request values if provided
+        if request is not None and isinstance(request, dict):
+            if "task_id" in request and request["task_id"]:
+                task_id = request["task_id"]
+            if "seed" in request and request["seed"] is not None:
+                seed = request["seed"]
         
+        print(f"[RESET] task_id={task_id}, seed={seed}", flush=True)
+        
+        # Validate task_id
         if task_id not in TASKS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid task_id. Must be one of: {list(TASKS.keys())}"
-            )
+            raise ValueError(f"Invalid task_id '{task_id}'. Must be one of: {list(TASKS.keys())}")
         
-        # Create new environment
+        # Create and reset environment
         env = CustomerSupportEnv(task_id=task_id, seed=seed)
         obs = env.reset()
         
@@ -157,6 +164,8 @@ async def reset(request: ResetRequest = None) -> JSONResponse:
             "steps": 0,
             "done": False,
         }
+        
+        print(f"[RESET] Created session {session_id}", flush=True)
         
         return JSONResponse(
             status_code=200,
@@ -171,7 +180,11 @@ async def reset(request: ResetRequest = None) -> JSONResponse:
             }
         )
     
+    except ValueError as e:
+        print(f"[RESET ERROR] Validation error: {e}", flush=True)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        print(f"[RESET ERROR] {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
 
