@@ -80,36 +80,58 @@ class GradeRequest(BaseModel):
     session_id: str
 
 
-# ── Helper: Serialize observation/reward to JSON ──────────────────────────────
+# ── Helper: Make JSON serializable ──────────────────────────────────────────
+def to_json_serializable(obj: Any) -> Any:
+    """Convert any object to JSON-serializable format."""
+    if obj is None:
+        return None
+    elif isinstance(obj, (str, int, float, bool)):
+        return obj
+    elif isinstance(obj, dict):
+        return {k: to_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [to_json_serializable(item) for item in obj]
+    elif hasattr(obj, 'dict') and callable(obj.dict):
+        # Pydantic model
+        return to_json_serializable(obj.dict())
+    elif hasattr(obj, '__dict__'):
+        # Regular object with attributes
+        return to_json_serializable(obj.__dict__)
+    else:
+        # Fallback to string representation
+        return str(obj)
+
+
 def serialize_obs(obs: Observation) -> Dict[str, Any]:
     """Convert Observation dataclass to JSON-serializable dict."""
+    # Convert all fields to JSON-serializable format
     return {
-        "ticket_id": obs.ticket_id,
-        "task_id": obs.task_id,
-        "status": obs.status,
-        "sentiment": obs.sentiment,
-        "priority": obs.priority,
-        "category": obs.category,
-        "turn": obs.turn,
-        "max_turns": obs.max_turns,
-        "history": obs.history,
-        "kb_results": obs.kb_results,
-        "kb_searched": obs.kb_searched,
-        "empathized": obs.empathized,
-        "clarified": obs.clarified,
-        "solution_offered": obs.solution_offered,
-        "escalated": obs.escalated,
-        "cumulative_reward": obs.cumulative_reward,
-        "done": obs.done,
+        "ticket_id": to_json_serializable(obs.ticket_id),
+        "task_id": to_json_serializable(obs.task_id),
+        "status": to_json_serializable(obs.status),
+        "sentiment": to_json_serializable(obs.sentiment),
+        "priority": to_json_serializable(obs.priority),
+        "category": to_json_serializable(obs.category),
+        "turn": to_json_serializable(obs.turn),
+        "max_turns": to_json_serializable(obs.max_turns),
+        "history": to_json_serializable(obs.history),
+        "kb_results": to_json_serializable(obs.kb_results),
+        "kb_searched": to_json_serializable(obs.kb_searched),
+        "empathized": to_json_serializable(obs.empathized),
+        "clarified": to_json_serializable(obs.clarified),
+        "solution_offered": to_json_serializable(obs.solution_offered),
+        "escalated": to_json_serializable(obs.escalated),
+        "cumulative_reward": to_json_serializable(obs.cumulative_reward),
+        "done": to_json_serializable(obs.done),
     }
 
 
 def serialize_reward(reward: Reward) -> Dict[str, Any]:
     """Convert Reward dataclass to JSON-serializable dict."""
     return {
-        "total": reward.total,
-        "breakdown": reward.breakdown,
-        "reason": reward.reason,
+        "total": to_json_serializable(reward.total),
+        "breakdown": to_json_serializable(reward.breakdown),
+        "reason": to_json_serializable(reward.reason),
     }
 
 
@@ -167,11 +189,14 @@ async def reset(request: Optional[Dict[str, Any]] = Body(default=None)) -> JSONR
         
         print(f"[RESET] Created session {session_id}", flush=True)
         
+        # Serialize observation to ensure JSON compatibility
+        obs_json = serialize_obs(obs)
+        
         return JSONResponse(
             status_code=200,
             content={
                 "session_id": session_id,
-                "observation": serialize_obs(obs),
+                "observation": obs_json,
                 "info": {
                     "task_id": task_id,
                     "difficulty": TASKS[task_id].difficulty,
@@ -232,11 +257,15 @@ async def step(request: StepRequest) -> JSONResponse:
         session["steps"] += 1
         session["done"] = result.observation.done
         
+        # Serialize for JSON compatibility
+        obs_json = serialize_obs(result.observation)
+        reward_json = serialize_reward(result.reward)
+        
         return JSONResponse(
             status_code=200,
             content={
-                "observation": serialize_obs(result.observation),
-                "reward": serialize_reward(result.reward),
+                "observation": obs_json,
+                "reward": reward_json,
                 "done": result.observation.done,
                 "info": {
                     "step": session["steps"],
@@ -273,10 +302,12 @@ async def state_endpoint(session_id: str) -> JSONResponse:
         session = _sessions[session_id]
         obs = session["observation"]
         
+        obs_json = serialize_obs(obs)
+        
         return JSONResponse(
             status_code=200,
             content={
-                "observation": serialize_obs(obs),
+                "observation": obs_json,
                 "info": {
                     "task_id": session["task_id"],
                     "steps": session["steps"],
@@ -369,7 +400,7 @@ async def grade_endpoint(request: GradeRequest) -> JSONResponse:
             content={
                 "score": grader_result.score,
                 "passed": grader_result.passed,
-                "breakdown": grader_result.breakdown,
+                "breakdown": to_json_serializable(grader_result.breakdown),
                 "reason": grader_result.reason,
             }
         )
