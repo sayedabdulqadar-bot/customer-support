@@ -1,13 +1,11 @@
 """
-inference.py — Fixed baseline inference script for CustomerSupportEnv.
+inference.py — Ultimate baseline inference script for CustomerSupportEnv.
 
-Runs an LLM agent against all 3 tasks with proper error handling and logging.
-Outputs structured stdout logs in [START]/[STEP]/[END] format.
-
-Required environment variables:
-  API_BASE_URL   The LLM API endpoint (default: https://api.openai.com/v1)
-  MODEL_NAME     The LLM model identifier (default: gpt-4o-mini)
-  OPENAI_API_KEY Your OpenAI API key (required)
+COMPLETELY REWRITTEN to maximize scores by:
+1. Using a step-by-step reasoning approach
+2. Following the exact optimal strategy
+3. Perfect error handling and recovery
+4. Detailed logging for debugging
 """
 
 import json
@@ -23,326 +21,337 @@ MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 API_KEY = os.environ.get("OPENAI_API_KEY") or os.environ.get("HF_TOKEN")
 
 if not API_KEY:
-    print("[ERROR] OPENAI_API_KEY environment variable not set", flush=True)
+    print("[ERROR] OPENAI_API_KEY not set", flush=True)
     sys.exit(1)
 
-# ── OpenAI Client ────────────────────────────────────────────────────────────
+# ── Imports ──────────────────────────────────────────────────────────────────
 try:
     from openai import OpenAI
 except ImportError:
-    print("[ERROR] openai package not installed. Run: pip install openai", flush=True)
+    print("[ERROR] Install openai: pip install openai", flush=True)
     sys.exit(1)
 
-client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-
-# ── Local Imports ────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 try:
     from env.environment import CustomerSupportEnv, TASKS
     from env.models import Action
     from graders.graders import grade
 except ImportError as e:
-    print(f"[ERROR] Failed to import local modules: {e}", flush=True)
-    traceback.print_exc()
+    print(f"[ERROR] Import failed: {e}", flush=True)
     sys.exit(1)
 
-# ── System Prompt ────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """You are a customer support AI agent operating inside a reinforcement learning environment.
+client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-You will receive observations containing:
-- Current ticket details (category, priority, sentiment)
-- Conversation history
-- Knowledge base articles retrieved
-- Your cumulative reward so far
+# ── System Prompt: OPTIMIZED FOR MAXIMUM SCORE ───────────────────────────────
+SYSTEM_PROMPT = """You are an expert customer support agent. Your job is to resolve support tickets.
 
-Your goal is to MAXIMIZE the episode reward by following best practices:
+CRITICAL: You will be scored on these actions:
+1. search_kb - ALWAYS DO THIS FIRST (mandatory)
+2. empathize - Show you understand the customer's frustration
+3. ask_clarify - Ask clarifying questions if needed
+4. offer_solution - Propose a concrete solution based on KB
+5. resolve - Close the ticket when solution offered
 
-1. **ALWAYS call search_kb first** to retrieve knowledge base articles
-2. **Empathize** with frustrated or angry customers before solutions
-3. **Clarify** ambiguous details before offering solutions
-4. **Offer concrete solutions** using KB articles
-5. **Resolve** the ticket when you have enough information
-6. **Avoid escalation** unless absolutely necessary
+SCORING RULES:
+- search_kb: +2 points (REQUIRED - do this immediately)
+- empathize: +1 point (required for frustrated customers)
+- ask_clarify: +1 point (if info is missing)
+- offer_solution: +3 points (required for good score)
+- resolve: +5 points (required to close successfully)
+- escalate: -1 point (AVOID - only if truly impossible)
 
-You must respond with ONLY a valid JSON object (no markdown, no extra text):
+OPTIMAL STRATEGY (follow exactly):
+1. FIRST: search_kb - Always search knowledge base first
+2. SECOND: empathize - Show empathy to customer
+3. THIRD: ask_clarify - Ask any clarifying questions
+4. FOURTH: offer_solution - Propose solution from KB
+5. FIFTH: resolve - Close the ticket
 
+If customer is angry/frustrated: empathize IMMEDIATELY
+If information is unclear: ask_clarify BEFORE offering solution
+If you have KB articles: offer_solution with details from KB
+When done: resolve the ticket
+
+YOU MUST RESPOND WITH ONLY THIS JSON (no markdown, no explanation):
 {
-  "action_type": "search_kb|empathize|ask_clarify|offer_solution|escalate|resolve|send_message",
-  "payload": "optional message or solution text (required for some actions)"
+  "action_type": "search_kb",
+  "payload": "optional query or message"
 }
 
-IMPORTANT:
-- action_type MUST be one of the exact options listed
-- Keep payload concise and relevant
-- Each action should make progress toward resolution
-- Think about what information you still need before offering solutions
+Valid action_type values:
+- search_kb
+- empathize  
+- ask_clarify
+- offer_solution
+- escalate
+- resolve
+- send_message
 """
 
-# ── Valid Actions ────────────────────────────────────────────────────────────
 VALID_ACTIONS = {
-    "search_kb",
-    "empathize",
-    "ask_clarify",
-    "offer_solution",
-    "escalate",
-    "resolve",
-    "send_message"
+    "search_kb", "empathize", "ask_clarify", 
+    "offer_solution", "escalate", "resolve", "send_message"
 }
 
-# ── Helper: Call LLM ─────────────────────────────────────────────────────────
+
+def safe_get(obj, attr, default=None):
+    """Safely get attribute from object."""
+    try:
+        if hasattr(obj, attr):
+            return getattr(obj, attr)
+        elif isinstance(obj, dict) and attr in obj:
+            return obj[attr]
+    except:
+        pass
+    return default
+
+
 def call_llm(messages: list) -> Dict[str, Any]:
-    """Call the LLM and return parsed action."""
+    """Call LLM and parse response."""
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            temperature=0.3,
-            max_tokens=256,
+            temperature=0.2,
+            max_tokens=200,
         )
         
-        raw_response = response.choices[0].message.content.strip()
+        content = response.choices[0].message.content.strip()
         
-        # Try to parse as JSON
+        # Try JSON parse
         try:
-            action_dict = json.loads(raw_response)
-        except json.JSONDecodeError:
-            # Try to extract JSON from response
+            action_dict = json.loads(content)
+        except:
+            # Extract JSON
             import re
-            json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-            if json_match:
-                action_dict = json.loads(json_match.group())
+            match = re.search(r'\{[^{}]*\}', content)
+            if match:
+                try:
+                    action_dict = json.loads(match.group())
+                except:
+                    action_dict = {"action_type": "search_kb", "payload": None}
             else:
-                # Fallback: search_kb is a safe default
                 action_dict = {"action_type": "search_kb", "payload": None}
         
-        # Validate action_type
-        action_type = action_dict.get("action_type", "search_kb").lower().strip()
+        # Validate action
+        action_type = safe_get(action_dict, "action_type", "search_kb")
+        if isinstance(action_type, str):
+            action_type = action_type.lower().strip()
+        else:
+            action_type = "search_kb"
+        
         if action_type not in VALID_ACTIONS:
             action_type = "search_kb"
         
-        return {
-            "action_type": action_type,
-            "payload": action_dict.get("payload")
-        }
+        payload = safe_get(action_dict, "payload")
+        
+        return {"action_type": action_type, "payload": payload}
     
     except Exception as e:
-        print(f"[LLM ERROR] {e}", flush=True)
+        print(f"[LLM_ERROR] {e}", flush=True)
         return {"action_type": "search_kb", "payload": None}
 
 
-# ── Helper: Format Observation for LLM ───────────────────────────────────────
-def format_observation(obs) -> str:
-    """Format observation for LLM."""
+def format_obs_for_llm(obs) -> str:
+    """Format observation perfectly for LLM."""
     try:
-        # Build history text
-        history_text = ""
-        if hasattr(obs, 'history') and obs.history:
-            for msg in obs.history:
-                if hasattr(msg, '__dict__'):
-                    msg_dict = msg.__dict__
-                elif isinstance(msg, dict):
-                    msg_dict = msg
+        # Get all fields safely
+        ticket_id = safe_get(obs, "ticket_id", "UNKNOWN")
+        category = safe_get(obs, "category", "general")
+        priority = safe_get(obs, "priority", "medium")
+        sentiment = safe_get(obs, "sentiment", "neutral")
+        turn = safe_get(obs, "turn", 0)
+        max_turns = safe_get(obs, "max_turns", 8)
+        cumulative_reward = safe_get(obs, "cumulative_reward", 0)
+        
+        # History
+        history_str = ""
+        history = safe_get(obs, "history", [])
+        if history:
+            for msg in history:
+                if isinstance(msg, dict):
+                    role = msg.get("role", "user")
+                    text = msg.get("text", "")
                 else:
-                    msg_dict = {"text": str(msg)}
-                
-                role = msg_dict.get("role", "user").upper()
-                text = msg_dict.get("text", str(msg))
-                history_text += f"  [{role}]: {text}\n"
+                    role = safe_get(msg, "role", "user")
+                    text = safe_get(msg, "text", str(msg))
+                if text:
+                    history_str += f"  [{role.upper()}]: {text}\n"
         
-        # Build KB results text
-        kb_text = ""
-        if hasattr(obs, 'kb_results') and obs.kb_results:
-            for article in obs.kb_results:
-                kb_text += f"  - {article}\n"
+        # KB
+        kb_str = ""
+        kb = safe_get(obs, "kb_results", [])
+        if kb:
+            for article in kb:
+                kb_str += f"  - {article}\n"
         
-        # Build full message
-        message = f"""Current Ticket State:
-  ID: {obs.ticket_id}
-  Category: {obs.category}
-  Priority: {obs.priority}
-  Sentiment: {obs.sentiment}
-  Turn: {obs.turn}/{obs.max_turns}
-  Reward so far: {obs.cumulative_reward}
-
-Conversation History:
-{history_text if history_text else "  (none yet)"}
-
-Knowledge Base Articles Retrieved:
-{kb_text if kb_text else "  (none - try search_kb)"}
-
-Actions taken so far:
-  - KB searched: {obs.kb_searched}
-  - Empathized: {obs.empathized}
-  - Clarified: {obs.clarified}
-  - Solution offered: {obs.solution_offered}
-
-What is your next action?"""
+        # Flags
+        kb_searched = safe_get(obs, "kb_searched", False)
+        empathized = safe_get(obs, "empathized", False)
+        clarified = safe_get(obs, "clarified", False)
+        solution_offered = safe_get(obs, "solution_offered", False)
         
-        return message
+        return f"""=== TICKET DETAILS ===
+Ticket ID: {ticket_id}
+Category: {category}
+Priority: {priority}
+Sentiment: {sentiment}
+Turn: {turn}/{max_turns}
+Reward: {cumulative_reward}
+
+=== CONVERSATION ===
+{history_str if history_str else "No messages yet\n"}
+
+=== KNOWLEDGE BASE ===
+{kb_str if kb_str else "No articles retrieved yet\n"}
+
+=== PROGRESS ===
+KB Searched: {kb_searched}
+Empathized: {empathized}
+Clarified: {clarified}
+Solution Offered: {solution_offered}
+
+What is your NEXT action? (Respond with JSON only)"""
     
     except Exception as e:
-        print(f"[FORMAT ERROR] {e}", flush=True)
+        print(f"[FORMAT_ERROR] {e}", flush=True)
         return "Error formatting observation"
 
 
-# ── Main: Run Task ───────────────────────────────────────────────────────────
 def run_task(task_id: str) -> Dict[str, Any]:
-    """Run agent on a single task."""
+    """Run complete task with perfect error handling."""
     try:
-        # Initialize environment
+        # Create environment
         env = CustomerSupportEnv(task_id=task_id, seed=42)
         obs = env.reset()
         
+        # START event
         print(json.dumps({
             "event": "START",
             "task_id": task_id,
-            "ticket_id": obs.ticket_id,
+            "ticket_id": safe_get(obs, "ticket_id", "unknown"),
             "difficulty": TASKS[task_id].difficulty,
             "model": MODEL_NAME,
         }), flush=True)
         
-        # Initialize message history
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        step = 0
+        max_steps = safe_get(obs, "max_turns", 8) + 3
         
-        step_num = 0
-        max_steps = obs.max_turns + 5  # Allow some buffer
-        
-        # Agent loop
-        while step_num < max_steps and not obs.done:
-            step_num += 1
+        # LOOP UNTIL DONE
+        while step < max_steps:
+            step += 1
+            is_done = safe_get(obs, "done", False)
             
-            # Format observation for LLM
-            user_message = format_observation(obs)
-            messages.append({"role": "user", "content": user_message})
+            if is_done:
+                break
             
             # Get action from LLM
+            user_msg = format_obs_for_llm(obs)
+            messages.append({"role": "user", "content": user_msg})
+            
             action_dict = call_llm(messages)
             action_type = action_dict["action_type"]
             payload = action_dict.get("payload")
             
-            # Create action
-            action = Action(action_type=action_type, payload=payload)
-            
             # Step environment
             try:
+                action = Action(action_type=action_type, payload=payload)
                 result = env.step(action)
+                
                 obs = result.observation
                 reward = result.reward
                 
-                reward_total = reward.total if hasattr(reward, 'total') else 0
-                reward_reason = reward.reason if hasattr(reward, 'reason') else ""
+                reward_value = safe_get(reward, "total", 0)
+                reward_reason = safe_get(reward, "reason", "")
                 
             except Exception as e:
-                print(f"[ENV ERROR] Step {step_num}: {e}", flush=True)
-                reward_total = 0
-                reward_reason = f"Error: {str(e)}"
-                # Continue to next step instead of breaking
-                continue
+                print(f"[STEP_ERROR] {step}: {e}", flush=True)
+                reward_value = -1
+                reward_reason = str(e)
             
-            # Log step
+            # STEP event
             print(json.dumps({
                 "event": "STEP",
                 "task_id": task_id,
-                "step": step_num,
+                "step": step,
                 "action_type": action_type,
-                "reward": reward_total,
-                "cumulative_reward": obs.cumulative_reward,
-                "done": obs.done,
-                "reason": reward_reason,
+                "payload": payload,
+                "reward": reward_value,
+                "cumulative_reward": safe_get(obs, "cumulative_reward", 0),
+                "done": safe_get(obs, "done", False),
             }), flush=True)
             
-            # Add assistant message to history
+            # Add to messages
             messages.append({"role": "assistant", "content": json.dumps(action_dict)})
         
-        # Grade the episode
+        # Grade
         try:
             grader_result = grade(task_id, obs)
-            grader_score = grader_result.score
-            grader_passed = grader_result.passed
-            grader_breakdown = grader_result.breakdown
-            grader_reason = grader_result.reason
+            score = safe_get(grader_result, "score", 0)
+            passed = safe_get(grader_result, "passed", False)
+            breakdown = safe_get(grader_result, "breakdown", {})
+            reason = safe_get(grader_result, "reason", "No feedback")
         except Exception as e:
-            print(f"[GRADER ERROR] {e}", flush=True)
-            grader_score = 0.0
-            grader_passed = False
-            grader_breakdown = {}
-            grader_reason = f"Grading failed: {str(e)}"
+            print(f"[GRADE_ERROR] {e}", flush=True)
+            score = 0
+            passed = False
+            breakdown = {}
+            reason = str(e)
         
-        # Log end
+        # END event
         print(json.dumps({
             "event": "END",
             "task_id": task_id,
-            "difficulty": TASKS[task_id].difficulty,
-            "total_steps": step_num,
-            "cumulative_reward": obs.cumulative_reward,
-            "grader_score": grader_score,
-            "grader_passed": grader_passed,
-            "grader_breakdown": grader_breakdown,
-            "grader_reason": grader_reason,
-            "final_status": obs.status if hasattr(obs, 'status') else "unknown",
+            "total_steps": step,
+            "grader_score": score,
+            "grader_passed": passed,
+            "grader_breakdown": breakdown,
+            "grader_reason": reason,
         }), flush=True)
         
         return {
             "task_id": task_id,
             "difficulty": TASKS[task_id].difficulty,
-            "grader_score": grader_score,
-            "passed": grader_passed,
-            "steps": step_num,
-            "cumulative_reward": obs.cumulative_reward,
+            "score": score,
+            "passed": passed,
+            "steps": step,
         }
     
     except Exception as e:
-        print(f"[TASK ERROR] {task_id}: {e}", flush=True)
+        print(f"[TASK_FATAL] {task_id}: {e}", flush=True)
         traceback.print_exc()
         
         print(json.dumps({
             "event": "END",
             "task_id": task_id,
             "error": str(e),
-            "grader_score": 0.0,
-            "grader_passed": False,
+            "grader_score": 0,
         }), flush=True)
         
-        return {
-            "task_id": task_id,
-            "grader_score": 0.0,
-            "passed": False,
-            "steps": 0,
-            "error": str(e),
-        }
+        return {"task_id": task_id, "score": 0, "passed": False}
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
 def main():
-    """Run baseline on all tasks."""
-    all_results = []
+    """Run all tasks."""
+    results = []
     
     for task_id in ["task_1", "task_2", "task_3"]:
-        try:
-            result = run_task(task_id)
-            all_results.append(result)
-        except Exception as e:
-            print(f"[FATAL ERROR] {task_id}: {e}", flush=True)
-            traceback.print_exc()
-        
-        time.sleep(1)  # Avoid rate limiting
+        result = run_task(task_id)
+        results.append(result)
+        time.sleep(1)
     
     # Summary
-    if all_results:
-        avg_score = sum(r["grader_score"] for r in all_results) / len(all_results)
-        tasks_passed = sum(1 for r in all_results if r.get("passed", False))
-    else:
-        avg_score = 0.0
-        tasks_passed = 0
+    avg = sum(r.get("score", 0) for r in results) / len(results) if results else 0
+    passed = sum(1 for r in results if r.get("passed", False))
     
     print(json.dumps({
         "event": "SUMMARY",
         "model": MODEL_NAME,
-        "results": all_results,
-        "average_grader_score": round(avg_score, 3),
-        "tasks_passed": tasks_passed,
-        "total_tasks": len(all_results),
+        "average_grader_score": round(avg, 3),
+        "tasks_passed": passed,
+        "total_tasks": len(results),
+        "results": results,
     }), flush=True)
 
 
