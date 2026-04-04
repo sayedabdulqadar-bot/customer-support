@@ -11,22 +11,22 @@ jobs:
   baseline:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-    
+
     - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
         cache: 'pip'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-    
+
     - name: Run baseline inference
       env:
         API_BASE_URL: https://api.openai.com/v1
@@ -35,23 +35,22 @@ jobs:
       run: |
         python inference.py 2>&1 | tee baseline_output.log
       continue-on-error: true
-    
+
     - name: Parse results and create summary
       if: always()
       run: |
         python3 << 'PYTHON_EOF'
         import json
-        import sys
-        
+
         print("## 📊 Baseline Inference Results\n")
-        
+
         try:
           with open('baseline_output.log', 'r') as f:
             lines = f.readlines()
-            
+
           results = []
           summary = None
-          
+
           for line in lines:
             line = line.strip()
             if not line:
@@ -69,7 +68,7 @@ jobs:
                 summary = json.loads(line)
             except json.JSONDecodeError:
               pass
-          
+
           if results:
             print("### Task Scores\n")
             print("| Task | Score | Status | Steps |")
@@ -79,7 +78,7 @@ jobs:
               score_pct = f"{r['score']*100:.1f}%"
               print(f"| {r['task']} | {score_pct} | {status} | {r['steps']} |")
             print()
-          
+
           if summary:
             print("### Summary\n")
             print(f"- **Model**: {summary.get('model', 'unknown')}")
@@ -87,15 +86,15 @@ jobs:
             print(f"- **Tasks Passed**: {summary.get('tasks_passed', 0)}/{summary.get('total_tasks', 0)}")
           elif not results:
             print("⚠️ No results found. Check logs below.\n")
-            
+
         except Exception as e:
           print(f"⚠️ Error parsing results: {e}\n")
-        
+
         PYTHON_EOF
-        
+
     - name: Upload baseline output
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: baseline-results
         path: baseline_output.log
