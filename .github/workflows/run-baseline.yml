@@ -36,60 +36,63 @@ jobs:
         python inference.py 2>&1 | tee baseline_output.log
       continue-on-error: true
     
-    - name: Parse and display results
+    - name: Parse results and create summary
       if: always()
       run: |
-        echo "## 📊 Baseline Inference Results" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
+        python3 << 'PYTHON_EOF'
+        import json
+        import sys
         
-        if [ -f baseline_output.log ]; then
-          echo "### Task Results:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          grep '"event": "END"' baseline_output.log | python3 << 'EOF'
-import json
-import sys
-
-for line in sys.stdin:
-    try:
-        data = json.loads(line)
-        task_id = data.get('task_id', 'unknown')
-        score = data.get('grader_score', 0)
-        passed = data.get('grader_passed', False)
-        steps = data.get('total_steps', 0)
+        print("## 📊 Baseline Inference Results\n")
         
-        status = "✅ PASS" if passed else "❌ FAIL"
-        print(f"- **{task_id}**: Score `{score:.2%}` {status} ({steps} steps)")
-    except json.JSONDecodeError:
-        pass
-EOF
+        try:
+          with open('baseline_output.log', 'r') as f:
+            lines = f.readlines()
+            
+          results = []
+          summary = None
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Summary:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          for line in lines:
+            line = line.strip()
+            if not line:
+              continue
+            try:
+              if '"event": "END"' in line:
+                data = json.loads(line)
+                results.append({
+                  'task': data.get('task_id', 'unknown'),
+                  'score': data.get('grader_score', 0),
+                  'passed': data.get('grader_passed', False),
+                  'steps': data.get('total_steps', 0)
+                })
+              elif '"event": "SUMMARY"' in line:
+                summary = json.loads(line)
+            except json.JSONDecodeError:
+              pass
           
-          grep '"event": "SUMMARY"' baseline_output.log | python3 << 'EOF'
-import json
-import sys
-
-for line in sys.stdin:
-    try:
-        data = json.loads(line)
-        avg_score = data.get('average_grader_score', 0)
-        tasks_passed = data.get('tasks_passed', 0)
-        total_tasks = data.get('total_tasks', 0)
-        model = data.get('model', 'unknown')
+          if results:
+            print("### Task Scores\n")
+            print("| Task | Score | Status | Steps |")
+            print("|------|-------|--------|-------|")
+            for r in results:
+              status = "✅" if r['passed'] else "❌"
+              score_pct = f"{r['score']*100:.1f}%"
+              print(f"| {r['task']} | {score_pct} | {status} | {r['steps']} |")
+            print()
+          
+          if summary:
+            print("### Summary\n")
+            print(f"- **Model**: {summary.get('model', 'unknown')}")
+            print(f"- **Average Score**: {summary.get('average_grader_score', 0)*100:.1f}%")
+            print(f"- **Tasks Passed**: {summary.get('tasks_passed', 0)}/{summary.get('total_tasks', 0)}")
+          elif not results:
+            print("⚠️ No results found. Check logs below.\n")
+            
+        except Exception as e:
+          print(f"⚠️ Error parsing results: {e}\n")
         
-        print(f"- **Model**: {model}")
-        print(f"- **Average Score**: {avg_score:.2%}")
-        print(f"- **Tasks Passed**: {tasks_passed}/{total_tasks}")
-    except json.JSONDecodeError:
-        pass
-EOF
-        else
-          echo "⚠️ No baseline output found" >> $GITHUB_STEP_SUMMARY
-        fi
-    
+        PYTHON_EOF
+        
     - name: Upload baseline output
       if: always()
       uses: actions/upload-artifact@v3
@@ -97,79 +100,3 @@ EOF
         name: baseline-results
         path: baseline_output.log
         retention-days: 30
-    
-    - name: Comment results on PR
-      if: github.event_name == 'pull_request' && always()
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          
-          let comment = '## 📊 Baseline Inference Results\n\n';
-          
-          try {
-            const log = fs.readFileSync('baseline_output.log', 'utf8');
-            const lines = log.split('\n');
-            
-            let hasResults = false;
-            const results = [];
-            let summary = null;
-            
-            for (const line of lines) {
-              try {
-                if (line.includes('"event": "END"')) {
-                  const data = JSON.parse(line);
-                  results.push({
-                    task: data.task_id,
-                    score: data.grader_score,
-                    passed: data.grader_passed,
-                    steps: data.total_steps
-                  });
-                  hasResults = true;
-                } else if (line.includes('"event": "SUMMARY"')) {
-                  const data = JSON.parse(line);
-                  summary = {
-                    avg: data.average_grader_score,
-                    passed: data.tasks_passed,
-                    total: data.total_tasks,
-                    model: data.model
-                  };
-                }
-              } catch (e) {
-                // Skip invalid JSON lines
-              }
-            }
-            
-            if (hasResults && results.length > 0) {
-              comment += '### Task Scores\n\n';
-              comment += '| Task | Score | Status | Steps |\n';
-              comment += '|------|-------|--------|-------|\n';
-              
-              for (const r of results) {
-                const statusEmoji = r.passed ? '✅' : '❌';
-                const scorePercent = (r.score * 100).toFixed(1);
-                comment += `| ${r.task} | ${scorePercent}% | ${statusEmoji} | ${r.steps} |\n`;
-              }
-              
-              comment += '\n';
-            }
-            
-            if (summary) {
-              comment += '### Summary\n\n';
-              comment += `- **Model**: ${summary.model}\n`;
-              comment += `- **Average Score**: ${(summary.avg * 100).toFixed(1)}%\n`;
-              comment += `- **Tasks Passed**: ${summary.passed}/${summary.total}\n`;
-            } else if (!hasResults) {
-              comment += '⚠️ No results found. Check the workflow logs.\n';
-            }
-            
-          } catch (e) {
-            comment += '⚠️ Could not parse results: ' + e.message + '\n';
-          }
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
