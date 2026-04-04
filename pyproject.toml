@@ -32,7 +32,11 @@ dependencies = [
     "openai>=1.0.0",
     "numpy>=1.20.0",
     "pandas>=1.3.0",
+    "openenv>=0.2.0",
 ]
+
+[project.scripts]
+server = "server.app:main"
 
 [project.optional-dependencies]
 dev = [
@@ -48,11 +52,12 @@ Repository = "https://github.com/yourusername/customer-support-env.git"
 Documentation = "https://github.com/yourusername/customer-support-env/blob/main/README.md"
 
 [tool.setuptools]
-packages = ["env", "graders"]
+packages = ["env", "graders", "server"]
 
 [tool.setuptools.package-data]
 env = ["*.py"]
 graders = ["*.py"]
+server = ["*.py"]
 
 [tool.black]
 line-length = 100
