@@ -16,7 +16,7 @@ from typing import List, Optional
 # ============================================================================
 # ENVIRONMENT VARIABLES - Follow exact hackathon precedence
 # ============================================================================
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN") or "dummy"
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://api.openai.com/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini"
 TASK_NAME = os.getenv("TASK_NAME", "customer-support")
@@ -24,8 +24,7 @@ BENCHMARK = os.getenv("BENCHMARK", "customer-support")
 
 if not API_KEY:
     print("[ERROR] API_KEY environment variable not set", flush=True)
-    sys.exit(1)
-
+   
 # ============================================================================
 # IMPORTS
 # ============================================================================
