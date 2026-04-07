@@ -1,22 +1,34 @@
-
 """
-inference.py — Baseline inference with CORRECT hackathon output format.
-Output format: [START]/[STEP]/[END] with key=value pairs (NOT JSON)
+inference.py — CustomerSupportEnv baseline with EXACT hackathon output format.
+
+Follows the official hackathon template for stdout format:
+  [START] task=<task_name> env=<benchmark> model=<model_name>
+  [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+  [END]   success=<true|false> steps=<n> score=<0.000> rewards=<r1,r2,...,rn>
 """
 
 import os
 import sys
 import time
 import traceback
+from typing import List, Optional
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-API_KEY = os.environ.get("OPENAI_API_KEY") or os.environ.get("HF_TOKEN")
+# ============================================================================
+# ENVIRONMENT VARIABLES - Follow exact hackathon precedence
+# ============================================================================
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://api.openai.com/v1"
+MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini"
+TASK_NAME = os.getenv("TASK_NAME", "customer-support")
+BENCHMARK = os.getenv("BENCHMARK", "customer-support")
 
 if not API_KEY:
-    print("[ERROR] OPENAI_API_KEY not set", flush=True)
+    print("[ERROR] API_KEY environment variable not set", flush=True)
     sys.exit(1)
 
+# ============================================================================
+# IMPORTS
+# ============================================================================
 try:
     from openai import OpenAI
 except ImportError:
@@ -32,6 +44,9 @@ except ImportError as e:
     print(f"[ERROR] {e}", flush=True)
     sys.exit(1)
 
+# ============================================================================
+# CLIENT & CONFIG
+# ============================================================================
 client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 SYSTEM_PROMPT = """You are an expert customer support agent. Your goal is to resolve support tickets and maximize your score.
@@ -61,7 +76,40 @@ VALID_ACTIONS = {
     "offer_solution", "escalate", "resolve", "send_message"
 }
 
+MAX_STEPS = 15
+SUCCESS_SCORE_THRESHOLD = 0.5
 
+
+# ============================================================================
+# LOGGING FUNCTIONS - Exact hackathon format
+# ============================================================================
+def log_start(task: str, benchmark: str, model: str) -> None:
+    """Log episode start in hackathon format."""
+    print(f"[START] task={task} env={benchmark} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    """Log each step in hackathon format."""
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    """Log episode end in hackathon format."""
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
 def safe_get(obj, attr, default=None):
     """Safely get attribute from object or dict."""
     try:
@@ -116,7 +164,6 @@ def call_llm(messages):
         return {"action_type": action_type, "payload": payload}
     
     except Exception as e:
-        print(f"[LLM_ERROR] {e}", flush=True)
         return {"action_type": "search_kb", "payload": None}
 
 
@@ -165,42 +212,30 @@ def format_obs_for_llm(obs):
         return msg
     
     except Exception as e:
-        print(f"[FORMAT_ERROR] {e}", flush=True)
         return "Error formatting observation"
 
 
-def format_output(event_type, **kwargs):
-    """Format output in hackathon format: [EVENT] key=value key=value..."""
-    parts = [f"[{event_type}]"]
-    for key, value in kwargs.items():
-        if isinstance(value, bool):
-            value = "True" if value else "False"
-        elif isinstance(value, float):
-            value = f"{value:.3f}"
-        parts.append(f"{key}={value}")
-    return " ".join(parts)
-
-
+# ============================================================================
+# RUN TASK - Core logic
+# ============================================================================
 def run_task(task_id):
-    """Run complete task."""
+    """Run a single task and return results."""
+    rewards = []
+    steps_taken = 0
+    success = False
+    score = 0.0
+    error_msg = None
+    
     try:
         env = CustomerSupportEnv(task_id=task_id, seed=42)
         obs = env.reset()
         
         # START event
-        print(format_output("START", 
-            task=task_id,
-            ticket=safe_get(obs, "ticket_id", "unknown"),
-            difficulty=TASKS[task_id].difficulty,
-            model=MODEL_NAME
-        ), flush=True)
+        log_start(task=task_id, benchmark=BENCHMARK, model=MODEL_NAME)
         
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        step = 0
-        max_steps = 15
         
-        while step < max_steps:
-            step += 1
+        for step in range(1, MAX_STEPS + 1):
             is_done = safe_get(obs, "done", False)
             
             if is_done:
@@ -210,7 +245,7 @@ def run_task(task_id):
             user_msg = format_obs_for_llm(obs)
             messages.append({"role": "user", "content": user_msg})
             
-            # Get progress flags
+            # Get progress flags for rule-based strategy
             kb_searched = safe_get(obs, "kb_searched", False)
             empathized = safe_get(obs, "empathized", False)
             clarified = safe_get(obs, "clarified", False)
@@ -231,6 +266,9 @@ def run_task(task_id):
             action_type = action_dict["action_type"]
             payload = action_dict.get("payload")
             
+            # Format action string for logging
+            action_str = action_type if not payload else f"{action_type}({payload})"
+            
             try:
                 action = Action(action_type=action_type, payload=payload)
                 result = env.step(action)
@@ -239,82 +277,64 @@ def run_task(task_id):
                 reward = result.reward
                 
                 reward_value = safe_get(reward, "total", 0)
+                error = None
             
             except Exception as e:
-                reward_value = -1
+                reward_value = -1.0
+                error = str(e)
+                error_msg = error
             
-            # STEP event
-            print(format_output("STEP",
-                task=task_id,
-                step=step,
-                action=action_type,
-                reward=reward_value,
-                cumulative=safe_get(obs, "cumulative_reward", 0),
-                done=safe_get(obs, "done", False)
-            ), flush=True)
+            # STEP event - exact hackathon format
+            done_val = safe_get(obs, "done", False)
+            log_step(step=step, action=action_str, reward=reward_value, done=done_val, error=error)
             
+            rewards.append(reward_value)
+            steps_taken = step
             messages.append({"role": "assistant", "content": str(action_dict)})
         
-        # Grade
+        # Grade the episode
         try:
             grader_result = grade(task_id, obs)
             score = safe_get(grader_result, "score", 0)
-            passed = safe_get(grader_result, "passed", False)
-            reason = safe_get(grader_result, "reason", "")
+            success = score >= SUCCESS_SCORE_THRESHOLD
         except Exception as e:
-            score = 0
-            passed = False
-            reason = str(e)
+            score = 0.0
+            success = False
         
-        # END event
-        print(format_output("END",
-            task=task_id,
-            steps=step,
-            score=score,
-            passed=passed,
-            reason=reason
-        ), flush=True)
-        
-        return {
-            "task_id": task_id,
-            "score": score,
-            "passed": passed,
-            "steps": step,
-        }
-    
     except Exception as e:
-        print(f"[TASK_FATAL] {task_id}: {e}", flush=True)
+        error_msg = str(e)
         traceback.print_exc()
-        
-        print(format_output("END",
-            task=task_id,
-            score=0,
-            passed=False,
-            error=str(e)
-        ), flush=True)
-        
-        return {"task_id": task_id, "score": 0, "passed": False, "steps": 0}
+    
+    finally:
+        # END event - exact hackathon format
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    
+    return {
+        "task_id": task_id,
+        "score": score,
+        "success": success,
+        "steps": steps_taken,
+        "rewards": rewards,
+    }
 
 
+# ============================================================================
+# MAIN
+# ============================================================================
 def main():
     """Run all tasks."""
-    results = []
+    all_results = []
     
     for task_id in ["task_1", "task_2", "task_3"]:
         result = run_task(task_id)
-        results.append(result)
+        all_results.append(result)
         time.sleep(1)
     
-    # Calculate summary
-    avg = sum(r.get("score", 0) for r in results) / len(results) if results else 0
-    passed = sum(1 for r in results if r.get("passed", False))
+    # Calculate final statistics
+    avg_score = sum(r["score"] for r in all_results) / len(all_results) if all_results else 0
+    total_success = sum(1 for r in all_results if r["success"])
     
-    print(format_output("SUMMARY",
-        avg_score=avg,
-        passed=passed,
-        total=len(results),
-        model=MODEL_NAME
-    ), flush=True)
+    # (Optional: could log final summary here if needed)
 
 
 if __name__ == "__main__":
