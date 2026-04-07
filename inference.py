@@ -325,7 +325,7 @@ def main():
     # Calculate final statistics
     avg_score = sum(r["score"] for r in all_results) / len(all_results) if all_results else 0
     total_success = sum(1 for r in all_results if r["success"])
-    
+    print(f"[SUMMARY] avg_score={avg_score:.3f} success_rate={total_success}/{len(all_results)}", flush=True)
     # (Optional: could log final summary here if needed)
 
 
