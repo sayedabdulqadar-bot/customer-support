@@ -21,6 +21,9 @@ MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 
 API_KEY = os.getenv("API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")  # optional fallback
+
+TASK_NAME = os.getenv("TASK_NAME", "customer-support")
+BENCHMARK = os.getenv("BENCHMARK", "customer-support")
 # ============================================================================
 # IMPORTS
 # ============================================================================
