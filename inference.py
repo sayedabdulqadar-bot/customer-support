@@ -16,15 +16,11 @@ from typing import List, Optional
 # ============================================================================
 # ENVIRONMENT VARIABLES - Follow exact hackathon precedence
 # ============================================================================
-API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN") or "dummy"
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://api.openai.com/v1"
-MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4o-mini"
-TASK_NAME = os.getenv("TASK_NAME", "customer-support")
-BENCHMARK = os.getenv("BENCHMARK", "customer-support")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 
-if not API_KEY:
-    print("[ERROR] API_KEY environment variable not set", flush=True)
-   
+API_KEY = os.getenv("API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")  # optional fallback
 # ============================================================================
 # IMPORTS
 # ============================================================================
@@ -46,7 +42,10 @@ except ImportError as e:
 # ============================================================================
 # CLIENT & CONFIG
 # ============================================================================
-client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+client = OpenAI(
+    base_url=API_BASE_URL,
+    api_key=API_KEY or HF_TOKEN
+)
 
 SYSTEM_PROMPT = """You are an expert customer support agent. Your goal is to resolve support tickets and maximize your score.
 
