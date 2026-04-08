@@ -51,6 +51,7 @@ def grade_task_1(obs: Observation) -> GraderResult:
     breakdown["resolved"] = resolve_score
 
     total = sum(breakdown.values())
+    total = min(total, 0.999)
     passed = total >= 0.70
 
     return GraderResult(
@@ -100,6 +101,7 @@ def grade_task_2(obs: Observation) -> GraderResult:
     breakdown["resolved"] = 0.15 if resolved else 0.0
 
     total = sum(breakdown.values())
+    total = min(total, 0.999)
     passed = total >= 0.70
 
     return GraderResult(
@@ -155,6 +157,7 @@ def grade_task_3(obs: Observation) -> GraderResult:
     breakdown["resolved"] = 0.15 if resolved else 0.0
 
     total = sum(breakdown.values())
+    total = min(total, 0.999)
     # Hard cap at 0.85 if escalated (escalation shows poor judgment on this task)
     if obs.escalated:
         total = min(total, 0.55)
