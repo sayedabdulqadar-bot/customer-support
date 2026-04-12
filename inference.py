@@ -266,7 +266,7 @@ def run_task(task_id):
             else:
                 payload = None
 
-    action_dict = {"action_type": "offer_solution", "payload": payload}e}
+    action_dict = {"action_type": "offer_solution", "payload": payload}
             else:
                 action_dict = {"action_type": "resolve", "payload": None}
             
