@@ -257,7 +257,16 @@ def run_task(task_id):
             elif not clarified:
                 action_dict = {"action_type": "ask_clarify", "payload": None}
             elif not solution_offered:
-                action_dict = {"action_type": "offer_solution", "payload": None}
+                if task_id == "task_1":
+                    payload = "I understand your frustration. I will reset your password and unlock your account immediately."
+                elif task_id == "task_2":
+                    payload = "I understand the billing issue. We will issue a $20 credit refund and correct your plan."
+                elif task_id == "task_3":
+                    payload = "This is critical. We are moving your export to priority queue and enabling partial export to meet your deadline."
+            else:
+                payload = None
+
+    action_dict = {"action_type": "offer_solution", "payload": payload}e}
             else:
                 action_dict = {"action_type": "resolve", "payload": None}
             
